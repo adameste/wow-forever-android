@@ -1309,7 +1309,11 @@ private val RESOLUTION_KEYS = listOf("gxFullscreenResolution", "gxWindowedResolu
 private const val CONFIG_WTF = "$FLAVOR_DIR/WTF/Config.wtf"
 
 // The portal Config.wtf already points at, else the install's region from .build.info.
-private fun portalOf(root: File) =
+private fun portalOf(root: File): String = runCatching { portalOfUnsafe(root) }
+    .onFailure { Timber.w(it, "Couldn't read the portal from $root, defaulting to US") }
+    .getOrDefault("US")
+
+private fun portalOfUnsafe(root: File) =
     File(root, CONFIG_WTF).takeIf { it.isFile }?.readLines()?.firstOrNull { it.startsWith("SET portal ", ignoreCase = true) }
         ?.substringAfter(" ")?.substringAfter(" ")?.trim('"')?.takeIf { it.isNotBlank() }
         ?: WowClientDownloader.readBuildInfo(File(root, BUILD_INFO))?.get("Branch")?.takeIf { it.isNotBlank() }?.uppercase() ?: "US"
