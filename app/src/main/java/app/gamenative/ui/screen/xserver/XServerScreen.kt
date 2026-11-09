@@ -4762,7 +4762,9 @@ private suspend fun extractGraphicsDriverFiles(
         vulkanVersion = "$vulkanVersion.$vulkanVersionPatch"
         envVars.put("WRAPPER_VK_VERSION", vulkanVersion)
 
-        val blacklistedExtensions: String? = graphicsDriverConfig.get("blacklistedExtensions")
+        // A WRAPPER_EXTENSION_BLACKLIST in the container's env vars wins: the config key can't hold a comma-separated list.
+        val blacklistedExtensions: String? = EnvVars(container.envVars).get("WRAPPER_EXTENSION_BLACKLIST")
+            .takeIf { it.isNotEmpty() } ?: graphicsDriverConfig.get("blacklistedExtensions")
         envVars.put("WRAPPER_EXTENSION_BLACKLIST", blacklistedExtensions)
 
         val gpuName = graphicsDriverConfig.get("gpuName")

@@ -1118,6 +1118,7 @@ private const val ADRENO_8XX_DRIVER = "Turnip-V32-RP6sched"
 // Not a bundled driver: tells the Wrapper to use the phone's own Vulkan driver (Mali, Xclipse, ...). Experimental.
 private const val SYSTEM_DRIVER = "System"
 private const val DEFAULT_DEVICE_MEMORY_MB = 3072
+private const val DEFAULT_EXTENSION_BLACKLIST = "VK_EXT_extended_dynamic_state3,VK_EXT_graphics_pipeline_library,VK_KHR_pipeline_library"
 private const val PROTON_VERSION = "proton-11.0-90624-arm64ec"
 private const val DXVK_VERSION = "2.4.1-wow-aarch64-test"
 
@@ -1239,6 +1240,7 @@ private class GfxOverrides(val settings: Map<String, String> = emptyMap(), val e
             # quality=high
             # resourceType=buffer
             # env WRAPPER_NO_BCN_THREAD=1
+            # env WRAPPER_EXTENSION_BLACKLIST=VK_EXT_extended_dynamic_state3,VK_EXT_graphics_pipeline_library,VK_KHR_pipeline_library
         """.trimIndent() + "\n"
 
         fun load(): GfxOverrides = runCatching {
@@ -1269,7 +1271,14 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String)
     // Experimental profile: have DXVK write dxvk_*.log to D: (the phone's Download folder) to diagnose device-lost loops.
     val overrides = if (gpu.usesSystemDriver) GfxOverrides.load() else GfxOverrides()
     val diagEnv = if (gpu.usesSystemDriver) " DXVK_LOG_LEVEL=info DXVK_LOG_PATH=D:/" else ""
-    val extraEnv = overrides.env.joinToString("") { " $it" }
+    // The Mali driver dereferences a null pointer inside vkCreateGraphicsPipelines, which aborts the game. Hide the
+    // pipeline-related extensions the wrapper only partly supports so DXVK takes the plain pipeline path.
+    val defaultEnv = if (gpu.usesSystemDriver && overrides.env.none { it.startsWith("WRAPPER_EXTENSION_BLACKLIST=") }) {
+        listOf("WRAPPER_EXTENSION_BLACKLIST=$DEFAULT_EXTENSION_BLACKLIST")
+    } else {
+        emptyList()
+    }
+    val extraEnv = (defaultEnv + overrides.env).joinToString("") { " $it" }
     val deviceMemoryMb = overrides.settings["maxDeviceMemory"]?.toIntOrNull() ?: DEFAULT_DEVICE_MEMORY_MB
     val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox TU_DEBUG=${gpu.tuDebug} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144$samsungEnv$diagEnv$extraEnv"
     return JSONObject().apply {
