@@ -63,6 +63,7 @@ import com.winlator.contents.ContentProfile
 import com.winlator.contents.ContentsManager
 import com.winlator.core.FileUtils
 import com.winlator.core.GPUInformation
+import com.winlator.core.KeyValueSet
 import com.winlator.core.TarCompressorUtils
 import com.winlator.xenvironment.ImageFs
 import com.winlator.xenvironment.ImageFsInstaller
@@ -1205,11 +1206,63 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
     return CONTAINER_ID
 }
 
+/**
+ * Experimental, non-Adreno only: lets the user tweak graphics settings without a new build by editing
+ * `Download/wowforever-gfx.txt`. A commented template is written on first launch. Lines are `key=value`
+ * (replaces a graphics driver setting, e.g. `transcoder=cpu`) or `env NAME=value` (adds an environment variable).
+ */
+private class GfxOverrides(val settings: Map<String, String> = emptyMap(), val env: List<String> = emptyList()) {
+    fun applyTo(config: String): String {
+        val set = KeyValueSet(config)
+        settings.forEach { (key, value) -> set.put(key, value) }
+        return set.data
+    }
+
+    companion object {
+        private const val FILE_NAME = "wowforever-gfx.txt"
+        private val TEMPLATE = """
+            # Graphics overrides for non-Adreno GPUs. Edit, save, then fully close and reopen the app.
+            # key=value        replaces a graphics driver setting (current defaults shown, remove the leading # to use)
+            # env NAME=value   adds an environment variable for the game
+            #
+            # bcnEmulationType=compute
+            # transcoder=gpu
+            # bcnEmulation=auto
+            # quality=high
+            # resourceType=buffer
+            # env WRAPPER_NO_BCN_THREAD=1
+        """.trimIndent() + "\n"
+
+        fun load(): GfxOverrides = runCatching {
+            val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), FILE_NAME)
+            if (!file.exists()) {
+                file.writeText(TEMPLATE)
+                return GfxOverrides()
+            }
+            val settings = linkedMapOf<String, String>()
+            val env = mutableListOf<String>()
+            file.readLines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }.forEach { line ->
+                when {
+                    line.startsWith("env ") -> line.removePrefix("env ").trim().takeIf { "=" in it && " " !in it }?.let(env::add)
+                    "=" in line && "," !in line -> settings[line.substringBefore("=").trim()] = line.substringAfter("=").trim()
+                }
+            }
+            Timber.i("Graphics overrides from ${file.path}: settings=$settings env=$env")
+            GfxOverrides(settings, env)
+        }.getOrElse {
+            Timber.w(it, "Couldn't read $FILE_NAME")
+            GfxOverrides()
+        }
+    }
+}
+
 private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String): JSONObject {
     val samsungEnv = if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) " FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1" else ""
     // Experimental profile: have DXVK write dxvk_*.log to D: (the phone's Download folder) to diagnose device-lost loops.
+    val overrides = if (gpu.usesSystemDriver) GfxOverrides.load() else GfxOverrides()
     val diagEnv = if (gpu.usesSystemDriver) " DXVK_LOG_LEVEL=info DXVK_LOG_PATH=D:/" else ""
-    val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox TU_DEBUG=${gpu.tuDebug} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144$samsungEnv$diagEnv"
+    val extraEnv = overrides.env.joinToString("") { " $it" }
+    val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox TU_DEBUG=${gpu.tuDebug} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144$samsungEnv$diagEnv$extraEnv"
     return JSONObject().apply {
         put("id", CONTAINER_ID)
         put("name", "WoW Forever")
@@ -1222,7 +1275,7 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String)
         put(
             "graphicsDriverConfig",
             if (gpu.usesSystemDriver) {
-                "version=${gpu.driver},adrenotoolsTurnip=0,resourceType=buffer,bcnEmulation=auto,bcnEmulationType=compute,transcoder=gpu,quality=high"
+                overrides.applyTo("version=${gpu.driver},adrenotoolsTurnip=0,resourceType=buffer,bcnEmulation=auto,bcnEmulationType=compute,transcoder=gpu,quality=high")
             } else {
                 "version=${gpu.driver},adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=auto,quality=high"
             },
