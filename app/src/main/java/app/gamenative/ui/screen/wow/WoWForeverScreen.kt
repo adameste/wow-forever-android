@@ -1174,7 +1174,8 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
 
     check(File(gameRoot, BUILD_INFO).exists()) { "Missing $BUILD_INFO in $gameRoot. Copy it from your WoW install." }
     try {
-        ensureGameConfig(gameRoot, screenSize, GameRegion.saved(context))
+        val gfxOverrides = if (gpu.usesSystemDriver) GfxOverrides.load() else GfxOverrides()
+        ensureGameConfig(gameRoot, screenSize, GameRegion.saved(context), gfxOverrides.settings[GfxOverrides.GX_API_KEY])
     } catch (e: Exception) {
         if (e.isPermissionDenied()) throw StorageAccessDeniedException(e)
         throw e
@@ -1222,13 +1223,16 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
 private class GfxOverrides(val settings: Map<String, String> = emptyMap(), val env: List<String> = emptyList()) {
     fun applyTo(config: String): String {
         val set = KeyValueSet(config)
-        settings.filterKeys { it != DRIVER_KEY }.forEach { (key, value) -> set.put(key, value) }
+        settings.filterKeys { it !in LAUNCHER_KEYS }.forEach { (key, value) -> set.put(key, value) }
         return set.data
     }
 
     companion object {
         private const val FILE_NAME = "wowforever-gfx.txt"
         const val DRIVER_KEY = "driver"
+        const val GX_API_KEY = "gxApi"
+        const val EXEC_ARGS_KEY = "execArgs"
+        private val LAUNCHER_KEYS = setOf(DRIVER_KEY, GX_API_KEY, EXEC_ARGS_KEY)
         private val TEMPLATE = """
             # Graphics overrides for non-Adreno GPUs. Edit, save, then fully close and reopen the app.
             # key=value        replaces a graphics driver setting (current defaults shown, remove the leading # to use)
@@ -1236,6 +1240,8 @@ private class GfxOverrides(val settings: Map<String, String> = emptyMap(), val e
             #
             # driver=Wrapper-gamenative    which Vulkan wrapper to use: Wrapper, Wrapper-v2, Wrapper-gamenative, Wrapper-legacy, Wrapper-leegao
             #                              (a new one is downloaded the first time, so you need internet)
+            # gxApi=D3D11                  the game's graphics API in Config.wtf (e.g. try Vulkan; exact name depends on the game)
+            # execArgs=-d3d11              command-line flag that selects it (e.g. -vulkan)
             # bcnEmulationType=none
             # transcoder=cpu
             # maxDeviceMemory=3072
@@ -1314,7 +1320,7 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String)
         put("fexcoreVersion", "2609-0")
         put("drives", "D:/storage/emulated/0/DownloadE:/data/data/app.wowforever/storageG:${gameRoot.path}")
         put("executablePath", "G:\\$FLAVOR_DIR\\$EXE_NAME")
-        put("execArgs", "-d3d11")
+        put("execArgs", if (gpu.usesSystemDriver) overrides.settings[GfxOverrides.EXEC_ARGS_KEY] ?: "-d3d11" else "-d3d11")
         put("showFPS", true)
         // Keep running in the background: a suspended client drops its Battle.net connection, e.g. while the
         // player fetches an authenticator code from another app.
@@ -1357,7 +1363,7 @@ private val CONFIG_DEFAULTS = linkedMapOf(
     "accessibilityScreenNarrationEnabled" to "\"0\"",
 )
 
-internal fun ensureGameConfig(root: File, screenSize: String, region: GameRegion?) {
+internal fun ensureGameConfig(root: File, screenSize: String, region: GameRegion?, gxApi: String? = null) {
     val flavorDir = File(root, FLAVOR_DIR)
     flavorDir.mkdirs()
     val flavorInfo = File(flavorDir, ".flavor.info")
@@ -1384,7 +1390,7 @@ internal fun ensureGameConfig(root: File, screenSize: String, region: GameRegion
         configWtf.writeText(CONFIG_DEFAULTS.entries.joinToString("\n") { "SET ${it.key} ${it.value}" } + "\n")
     }
 
-    val forced = mapOf("gxApi" to CONFIG_DEFAULTS.getValue("gxApi"), "portal" to "\"${region?.name ?: portalOf(root)}\"") +
+    val forced = mapOf("gxApi" to (gxApi?.let { "\"$it\"" } ?: CONFIG_DEFAULTS.getValue("gxApi")), "portal" to "\"${region?.name ?: portalOf(root)}\"") +
         RESOLUTION_KEYS.associateWith { "\"$screenSize\"" }
     val forcedLines = forced.map { (key, value) -> "SET $key $value" }
     val original = configWtf.readLines()
