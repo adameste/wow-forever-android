@@ -1222,17 +1222,20 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
 private class GfxOverrides(val settings: Map<String, String> = emptyMap(), val env: List<String> = emptyList()) {
     fun applyTo(config: String): String {
         val set = KeyValueSet(config)
-        settings.forEach { (key, value) -> set.put(key, value) }
+        settings.filterKeys { it != DRIVER_KEY }.forEach { (key, value) -> set.put(key, value) }
         return set.data
     }
 
     companion object {
         private const val FILE_NAME = "wowforever-gfx.txt"
+        const val DRIVER_KEY = "driver"
         private val TEMPLATE = """
             # Graphics overrides for non-Adreno GPUs. Edit, save, then fully close and reopen the app.
             # key=value        replaces a graphics driver setting (current defaults shown, remove the leading # to use)
             # env NAME=value   adds an environment variable for the game
             #
+            # driver=Wrapper-gamenative    which Vulkan wrapper to use: Wrapper, Wrapper-v2, Wrapper-gamenative, Wrapper-legacy, Wrapper-leegao
+            #                              (a new one is downloaded the first time, so you need internet)
             # bcnEmulationType=none
             # transcoder=cpu
             # maxDeviceMemory=3072
@@ -1288,7 +1291,10 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String)
         put("envVars", envVars)
         // Adreno has native BC texture support. Other GPUs (Mali, ...) need the newer wrapper, which translates
         // BC1-BC7 textures on the GPU; the stock wrapper fails to create views for them and the game loses its device.
-        put("graphicsDriver", if (gpu.usesSystemDriver) "Wrapper-gamenative" else "Wrapper")
+        put(
+            "graphicsDriver",
+            if (gpu.usesSystemDriver) overrides.settings[GfxOverrides.DRIVER_KEY] ?: "Wrapper-gamenative" else "Wrapper",
+        )
         put("graphicsDriverVersion", gpu.driver)
         put(
             "graphicsDriverConfig",
