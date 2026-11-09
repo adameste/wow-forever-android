@@ -1116,6 +1116,7 @@ private const val DEFAULT_DRIVER = "Turnip-WoW-scheduler-test"
 private const val ADRENO_8XX_DRIVER = "Turnip-V32-RP6sched"
 // Not a bundled driver: tells the Wrapper to use the phone's own Vulkan driver (Mali, Xclipse, ...). Experimental.
 private const val SYSTEM_DRIVER = "System"
+private const val DEFAULT_DEVICE_MEMORY_MB = 3072
 private const val PROTON_VERSION = "proton-11.0-90624-arm64ec"
 private const val DXVK_VERSION = "2.4.1-wow-aarch64-test"
 
@@ -1225,8 +1226,9 @@ private class GfxOverrides(val settings: Map<String, String> = emptyMap(), val e
             # key=value        replaces a graphics driver setting (current defaults shown, remove the leading # to use)
             # env NAME=value   adds an environment variable for the game
             #
-            # bcnEmulationType=compute
-            # transcoder=gpu
+            # bcnEmulationType=none
+            # transcoder=cpu
+            # maxDeviceMemory=3072
             # bcnEmulation=auto
             # quality=high
             # resourceType=buffer
@@ -1262,6 +1264,7 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String)
     val overrides = if (gpu.usesSystemDriver) GfxOverrides.load() else GfxOverrides()
     val diagEnv = if (gpu.usesSystemDriver) " DXVK_LOG_LEVEL=info DXVK_LOG_PATH=D:/" else ""
     val extraEnv = overrides.env.joinToString("") { " $it" }
+    val deviceMemoryMb = overrides.settings["maxDeviceMemory"]?.toIntOrNull() ?: DEFAULT_DEVICE_MEMORY_MB
     val envVars = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact,deck_emu MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=0 MESA_VK_WSI_PRESENT_MODE=mailbox TU_DEBUG=${gpu.tuDebug} VKD3D_SHADER_MODEL=6_0 PULSE_LATENCY_MSEC=144$samsungEnv$diagEnv$extraEnv"
     return JSONObject().apply {
         put("id", CONTAINER_ID)
@@ -1275,14 +1278,16 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String)
         put(
             "graphicsDriverConfig",
             if (gpu.usesSystemDriver) {
-                overrides.applyTo("version=${gpu.driver},adrenotoolsTurnip=0,resourceType=buffer,bcnEmulation=auto,bcnEmulationType=compute,transcoder=gpu,quality=high")
+                overrides.applyTo("version=${gpu.driver},adrenotoolsTurnip=0,resourceType=buffer,bcnEmulation=auto,bcnEmulationType=none,transcoder=cpu,maxDeviceMemory=$deviceMemoryMb,quality=high")
             } else {
                 "version=${gpu.driver},adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=auto,quality=high"
             },
         )
         put("displayRenderer", "vulkan")
         put("dxwrapper", "dxvk-$DXVK_VERSION-1")
-        put("dxwrapperConfig", "version=$DXVK_VERSION-1")
+        // DXVK advertises all of the phone's RAM as video memory, so the game sizes its texture budget to ~7 GB and
+        // Android kills it. Cap what DXVK reports on non-Adreno phones.
+        put("dxwrapperConfig", "version=$DXVK_VERSION-1" + if (gpu.usesSystemDriver) ",maxDeviceMemory=$deviceMemoryMb" else "")
         put("wineVersion", "$PROTON_VERSION-1")
         put("containerVariant", "bionic")
         put("fexcoreVersion", "2609-0")
