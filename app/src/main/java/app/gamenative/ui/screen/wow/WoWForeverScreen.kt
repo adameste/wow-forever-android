@@ -1215,9 +1215,18 @@ private fun containerConfig(gameRoot: File, gpu: GpuProfile, screenSize: String)
         put("name", "WoW Forever")
         put("screenSize", screenSize)
         put("envVars", envVars)
-        put("graphicsDriver", "Wrapper")
+        // Adreno has native BC texture support. Other GPUs (Mali, ...) need the newer wrapper, which translates
+        // BC1-BC7 textures on the GPU; the stock wrapper fails to create views for them and the game loses its device.
+        put("graphicsDriver", if (gpu.usesSystemDriver) "Wrapper-gamenative" else "Wrapper")
         put("graphicsDriverVersion", gpu.driver)
-        put("graphicsDriverConfig", "version=${gpu.driver},adrenotoolsTurnip=${if (gpu.usesSystemDriver) 0 else 1},resourceType=buffer,bcnEmulation=auto,quality=high")
+        put(
+            "graphicsDriverConfig",
+            if (gpu.usesSystemDriver) {
+                "version=${gpu.driver},adrenotoolsTurnip=0,resourceType=buffer,bcnEmulation=auto,bcnEmulationType=compute,transcoder=gpu,quality=high"
+            } else {
+                "version=${gpu.driver},adrenotoolsTurnip=1,resourceType=buffer,bcnEmulation=auto,quality=high"
+            },
+        )
         put("displayRenderer", "vulkan")
         put("dxwrapper", "dxvk-$DXVK_VERSION-1")
         put("dxwrapperConfig", "version=$DXVK_VERSION-1")
