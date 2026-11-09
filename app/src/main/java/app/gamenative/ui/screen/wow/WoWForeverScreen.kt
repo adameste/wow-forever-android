@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import app.gamenative.BuildConfig
 import app.gamenative.PluviaApp
+import app.gamenative.PrefManager
 import app.gamenative.events.AndroidEvent
 import app.gamenative.ui.screen.wow.WowClientDownloader.BUILD_INFO
 import app.gamenative.ui.screen.wow.WowClientDownloader.EXE_NAME
@@ -1192,6 +1193,11 @@ private fun prepareLaunch(context: Context, gameRoot: File, gpu: GpuProfile, scr
         }
     }
 
+    if (gpu.usesSystemDriver) {
+        // Experimental profile: keep Wine's own error output in Android/data/app.wowforever/files/wine_logs/wine_debug.log.
+        PrefManager.enableWineDebug = true
+        PrefManager.wineDebugChannels = "err,fixme,seh,loaddll"
+    }
     onStatus("Configuring ${gpu.label} container...")
     val containerManager = ContainerManager(context)
     val config = containerConfig(gameRoot, gpu, screenSize)
